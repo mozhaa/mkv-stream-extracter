@@ -34,15 +34,94 @@ struct container_element {
 	string fname;
 
 	bool selected;
+	int attachment_count;
 };
+
+static string fname;
+static int attachments_count = 0;
+bool op_i, op_n;
+
+static int usize(string s) {
+	int len = 0, i = 0;
+	while (s[i])
+		len += (s[i++] & 0xc0) != 0x80;
+	return len;
+}
+
+static std::string fixed_str(string str, int width) {
+	int ssize = usize(str);
+	if (ssize > width) {
+		if (width > 3)
+			str = str.substr(0, width - 1) + "…";
+		else
+			str = str.substr(0, width);
+	} else
+		str = string(width - ssize, ' ') + str;
+
+	return str;
+}
 
 static struct container_list {
 	vector<container_element> options = {};
-	int rel_start = 0;
+	int abs_start = 0;
 	int rel_cursor = 0;
-} menu;
+	int window_height;
 
-static string fname;
+	void show(int n) {
+		window_height = n;
+		for (int pos = 0, abs_pos = abs_start;
+			 pos < window_height && abs_pos < options.size();
+			 ++pos, ++abs_pos) {
+			if (pos == rel_cursor)
+				attron(A_REVERSE);
+			auto& elem = options[abs_pos];
+			mvprintw(pos + 1, 1, "%s| %s| %s| %s| %s| %s",
+					 fixed_str(elem.selected ? "* " : " ", 2).c_str(),
+					 fixed_str(elem.type, 15).c_str(),
+					 fixed_str(elem.name, 30).c_str(),
+					 fixed_str(elem.ext, 5).c_str(),
+					 fixed_str(elem.lang, 10).c_str(),
+					 fixed_str(elem.fname, 20).c_str());
+			attroff(A_REVERSE);
+		}
+	}
+
+	void fix_rel_cursor() { rel_cursor = min(rel_cursor, window_height - 1); }
+
+	void go_up() {
+		fix_rel_cursor();
+		if (rel_cursor == 0) {
+			if (abs_start > 0)
+				--abs_start;
+		} else {
+			--rel_cursor;
+		}
+	}
+
+	void go_down() {
+		fix_rel_cursor();
+		if (rel_cursor == window_height - 1) {
+			if (abs_start < options.size() - 1)
+				++abs_start;
+		} else {
+			++rel_cursor;
+		}
+	}
+
+	void select() { options[abs_start + rel_cursor].selected ^= true; }
+
+	void select_all() {
+		for (auto& elem : options) {
+			elem.selected = true;
+		}
+	}
+
+	void select_none() {
+		for (auto& elem : options) {
+			elem.selected = false;
+		}
+	}
+} menu;
 
 static int extract_info(const string& s) {
 	const char* rstr =
@@ -55,18 +134,75 @@ static int extract_info(const string& s) {
 		boost::sregex_iterator{cbegin(s), cend(s), r},
 		boost::sregex_iterator{}};
 
-
 	menu.options.reserve(matches.size());
 	for (auto& m : matches) {
+        if (m[3] != "Subtitle") {
+            continue;
+        }
 		menu.options.push_back(
 			container_element{m[1], m[2], m[3], m[4], m[5], m[6],
-							  m[3] != "Video" && m[3] != "Audio"});
+							  m[3] != "Video" && m[3] != "Audio",
+							  m[3] == "Attachment" ? ++attachments_count : 0});
 	}
 
 	return duration_cast<microseconds>(steady_clock::now() - begin).count();
 }
 
-static void run_interactive() {}
+static int run_interactive() {
+	setlocale(LC_ALL, "");
+	initscr();
+	raw();
+	nonl();
+	keypad(stdscr, true);
+	noecho();
+
+	int cancelled = 0;
+	while (true) {
+		int ch;
+		menu.show(getmaxy(stdscr));
+
+		refresh();
+		ch = getch();
+
+		if (ch == 259) {
+			menu.go_up();
+			continue;
+		}
+
+		if (ch == 258) {
+			menu.go_down();
+			continue;
+		}
+
+		if (ch == ' ') {
+			menu.select();
+			continue;
+		}
+
+		if (ch == 'a') {
+			menu.select_all();
+			continue;
+		}
+
+		if (ch == 'n') {
+			menu.select_none();
+			continue;
+		}
+
+		if (ch == 13) {
+			break;
+		}
+
+		if (ch == 'q') {
+			cancelled = 1;
+			break;
+		}
+	}
+
+	endwin();
+
+	return cancelled;
+}
 
 static string replace_ext(string f, string ext, string add = "") {
 	const boost::regex r(R"(^(.*)\.(.*)$)");
@@ -78,12 +214,19 @@ static string replace_ext(string f, string ext, string add = "") {
 	}
 }
 
+static void xsystem(string cmd) {
+	if (op_n) {
+		cout << cmd << endl;
+	} else {
+		system(cmd.c_str());
+	}
+}
+
 static void extract_data() {
 	string outdir = fname + " extracted";
 	string cmd;
 	cmd = "mkdir \"" + outdir + "\"";
-	cout << cmd << endl;
-	// system(cmd.c_str());
+	xsystem(cmd);
 
 	set<string> unique_ext = {};
 	for (const auto& elem : menu.options) {
@@ -114,17 +257,19 @@ static void extract_data() {
 
 		cmd = "ffmpeg -i \"" + fname + "\" -map " + elem.stream +
 			  " -c copy \"" + outdir + "/" + elem_fname + "\"";
-		cout << cmd << endl;
-		// system(cmd.c_str());
+		xsystem(cmd);
 	}
 }
 
 int main(int argc, char** argv) {
-	bool op_i;
 	for (int i = 1; i < argc; ++i) {
 		if (argv[i][0] == '-') {
-			if (argv[i] == "-i" || argv[i] == "--interactive") {
+			if (!strcmp(argv[i], "-i") || !strcmp(argv[i], "--interactive")) {
 				op_i = true;
+				continue;
+			}
+			if (!strcmp(argv[i], "-n")) {
+				op_n = true;
 				continue;
 			}
 			throw std::invalid_argument("unknown option: " + string(argv[i]));
@@ -149,13 +294,17 @@ int main(int argc, char** argv) {
 			 return x.type < y.type;
 		 });
 
+	int cancelled = false;
 	if (op_i) {
-		run_interactive();
+		cancelled = run_interactive();
 	}
 
-	extract_data();
-
-    cout << "[TIME]: ffprobe regex time = " << regex_time << " μs" << endl;
-
-	return 0;
+	if (!cancelled) {
+		cout << "[TIME]: ffprobe regex time = " << regex_time << " μs" << endl;
+		extract_data();
+		return 0;
+	} else {
+		cout << "Operation cancelled" << endl;
+		return -1;
+	}
 }

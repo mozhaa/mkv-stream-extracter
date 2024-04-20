@@ -1,5 +1,5 @@
 CC = g++
-CFLAGS = -std=c++2a -g -lboost_regex
+CFLAGS = -std=c++2a -g -lboost_regex -lncursesw
 EXE = subex
 OBJ = main.o
 SRCDIR = src
