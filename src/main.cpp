@@ -31,14 +31,11 @@ struct container_element {
 	string type;
 	string ext;
 	string name;
-	string fname;
 
-	bool selected;
-	int attachment_count;
+	bool selected = true;
 };
 
 static string fname;
-static int attachments_count = 0;
 bool op_i, op_n;
 
 static int usize(string s) {
@@ -75,13 +72,12 @@ static struct container_list {
 			if (pos == rel_cursor)
 				attron(A_REVERSE);
 			auto& elem = options[abs_pos];
-			mvprintw(pos + 1, 1, "%s| %s| %s| %s| %s| %s",
+			mvprintw(pos + 1, 1, "%s| %s| %s| %s| %s|",
 					 fixed_str(elem.selected ? "* " : " ", 2).c_str(),
 					 fixed_str(elem.type, 15).c_str(),
 					 fixed_str(elem.name, 30).c_str(),
 					 fixed_str(elem.ext, 5).c_str(),
-					 fixed_str(elem.lang, 10).c_str(),
-					 fixed_str(elem.fname, 20).c_str());
+					 fixed_str(elem.lang, 10).c_str());
 			attroff(A_REVERSE);
 		}
 	}
@@ -136,13 +132,10 @@ static int extract_info(const string& s) {
 
 	menu.options.reserve(matches.size());
 	for (auto& m : matches) {
-        if (m[3] != "Subtitle") {
-            continue;
-        }
-		menu.options.push_back(
-			container_element{m[1], m[2], m[3], m[4], m[5], m[6],
-							  m[3] != "Video" && m[3] != "Audio",
-							  m[3] == "Attachment" ? ++attachments_count : 0});
+		if (m[3] != "Subtitle") {
+			continue;
+		}
+		menu.options.push_back(container_element{m[1], m[2], m[3], m[4], m[5]});
 	}
 
 	return duration_cast<microseconds>(steady_clock::now() - begin).count();
@@ -223,41 +216,32 @@ static void xsystem(string cmd) {
 }
 
 static void extract_data() {
-	string outdir = fname + " extracted";
-	string cmd;
-	cmd = "mkdir \"" + outdir + "\"";
-	xsystem(cmd);
-
-	set<string> unique_ext = {};
+	map<string, int> fnames = {};
 	for (const auto& elem : menu.options) {
 		if (!elem.selected)
 			continue;
-
-		string ext = elem.ext;
-
-		if (elem.type == "Video") {
-			ext = "mp4";
-		} else if (elem.type == "Audio") {
-			ext = "mp3";
-		}
+        
 
 		string elem_fname;
-		if (elem.fname.size() != 0) {
-			elem_fname = elem.fname;
-		} else if (elem.name.size() != 0) {
-			elem_fname = replace_ext(fname, ext, " " + elem.name);
+		if (elem.name.size() != 0) {
+			elem_fname = replace_ext(fname, elem.ext, " " + elem.name);
 		} else if (elem.lang.size() != 0) {
-			elem_fname = replace_ext(fname, ext, " " + elem.lang);
-		} else if (!unique_ext.count(ext)) {
-			elem_fname = replace_ext(fname, ext);
-			unique_ext.insert(ext);
+			elem_fname = replace_ext(fname, elem.ext, " " + elem.lang);
 		} else {
-			elem_fname = replace_ext(fname, ext, " " + elem.stream);
+			elem_fname = replace_ext(fname, elem.ext);
 		}
 
-		cmd = "ffmpeg -i \"" + fname + "\" -map " + elem.stream +
-			  " -c copy \"" + outdir + "/" + elem_fname + "\"";
-		xsystem(cmd);
+		if (fnames.count(elem_fname)) {
+			elem_fname =
+				replace_ext(elem_fname, elem.ext,
+							" (" + to_string(++fnames[elem_fname]) + ")");
+		} else {
+			fnames.insert(make_pair(elem_fname, 0));
+		}
+
+        cout << "Extracting " << elem_fname << "..." << endl;
+		xsystem("ffmpeg -loglevel error -stats -i \"" + fname + "\" -map " +
+				elem.stream + " -c copy \"" + elem_fname + "\"");
 	}
 }
 
