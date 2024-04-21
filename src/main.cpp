@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <boost/regex.hpp>
 #include <chrono>
 #include <iostream>
@@ -218,8 +219,9 @@ static void extract_info() {
 
 static void extract_data() {
 	map<string, int> fnames = {};
-	remove_if(menu.options.begin(), menu.options.end(),
+	auto it = remove_if(menu.options.begin(), menu.options.end(),
 			  [](const container_element& elem) { return !elem.selected; });
+    menu.options.erase(it, menu.options.end());
 	for (const auto& elem : menu.options) {
 		string elem_fname;
 		if (menu.options.size() == 1) {
