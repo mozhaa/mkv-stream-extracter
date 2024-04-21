@@ -11,6 +11,9 @@
 using namespace std;
 using namespace std::chrono;
 
+static string fname;
+bool op_i, op_n;
+
 // Source: https://gist.github.com/meritozh/f0351894a2a4aa92871746bf45879157
 std::string exec(const char* cmd) {
 	std::shared_ptr<FILE> pipe(popen(cmd, "r"), pclose);
@@ -24,19 +27,6 @@ std::string exec(const char* cmd) {
 	}
 	return result;
 }
-
-struct container_element {
-	string stream;
-	string lang;
-	string type;
-	string ext;
-	string name;
-
-	bool selected = true;
-};
-
-static string fname;
-bool op_i, op_n;
 
 static int usize(string s) {
 	int len = 0, i = 0;
@@ -57,6 +47,34 @@ static std::string fixed_str(string str, int width) {
 
 	return str;
 }
+
+static void xsystem(string cmd) {
+	if (op_n) {
+		cout << cmd << endl;
+	} else {
+		system(cmd.c_str());
+	}
+}
+
+static string replace_ext(string f, string ext, string add = "") {
+	const boost::regex r(R"(^(.*)\.(.*)$)");
+	boost::smatch m;
+	if (boost::regex_match(f, m, r)) {
+		return m[1] + add + "." + ext;
+	} else {
+		return f + add + "." + ext;
+	}
+}
+
+struct container_element {
+	string stream;
+	string lang;
+	string type;
+	string ext;
+	string name;
+
+	bool selected = true;
+};
 
 static struct container_list {
 	vector<container_element> options = {};
@@ -119,28 +137,6 @@ static struct container_list {
 	}
 } menu;
 
-static int extract_info(const string& s) {
-	const char* rstr =
-		R"(^\s*Stream\s*#([0-9:]+)(\(.*?\))?:\s*(\w+):\s*(\S*).*?(?:(?:\n(?! {0,2}\S)[^\n]*)*title\s*:\s*(.*?))?(?:(?:\n(?! {0,2}\S)[^\n]*)*filename\s*:\s*(.*?))?$)";
-	const boost::regex r(rstr);
-
-	steady_clock::time_point begin = steady_clock::now();
-
-	const vector<boost::smatch> matches = {
-		boost::sregex_iterator{cbegin(s), cend(s), r},
-		boost::sregex_iterator{}};
-
-	menu.options.reserve(matches.size());
-	for (auto& m : matches) {
-		if (m[3] != "Subtitle") {
-			continue;
-		}
-		menu.options.push_back(container_element{m[1], m[2], m[3], m[4], m[5]});
-	}
-
-	return duration_cast<microseconds>(steady_clock::now() - begin).count();
-}
-
 static int run_interactive() {
 	setlocale(LC_ALL, "");
 	initscr();
@@ -197,38 +193,45 @@ static int run_interactive() {
 	return cancelled;
 }
 
-static string replace_ext(string f, string ext, string add = "") {
-	const boost::regex r(R"(^(.*)\.(.*)$)");
-	boost::smatch m;
-	if (boost::regex_match(f, m, r)) {
-		return m[1] + add + "." + ext;
-	} else {
-		return f + add + "." + ext;
-	}
-}
+static void extract_info() {
+	string cmd = "ffprobe \"" + string(fname) + "\" 2>&1";
+	string cmd_out = exec(cmd.c_str());
 
-static void xsystem(string cmd) {
-	if (op_n) {
-		cout << cmd << endl;
-	} else {
-		system(cmd.c_str());
+	const char* rstr =
+		R"(^\s*Stream\s*#([0-9:]+)(\(.*?\))?:\s*(\w+):\s*(\S*).*?(?:(?:\n(?! {0,2}\S)[^\n]*)*title\s*:\s*(.*?))?(?:(?:\n(?! {0,2}\S)[^\n]*)*filename\s*:\s*(.*?))?$)";
+	const boost::regex r(rstr);
+
+	steady_clock::time_point begin = steady_clock::now();
+
+	const vector<boost::smatch> matches = {
+		boost::sregex_iterator{cbegin(cmd_out), cend(cmd_out), r},
+		boost::sregex_iterator{}};
+
+	menu.options.reserve(matches.size());
+	for (auto& m : matches) {
+		if (m[3] != "Subtitle") {
+			continue;
+		}
+		menu.options.push_back(container_element{m[1], m[2], m[3], m[4], m[5]});
 	}
 }
 
 static void extract_data() {
 	map<string, int> fnames = {};
+	remove_if(menu.options.begin(), menu.options.end(),
+			  [](const container_element& elem) { return !elem.selected; });
 	for (const auto& elem : menu.options) {
-		if (!elem.selected)
-			continue;
-        
-
 		string elem_fname;
-		if (elem.name.size() != 0) {
-			elem_fname = replace_ext(fname, elem.ext, " " + elem.name);
-		} else if (elem.lang.size() != 0) {
-			elem_fname = replace_ext(fname, elem.ext, " " + elem.lang);
-		} else {
+		if (menu.options.size() == 1) {
 			elem_fname = replace_ext(fname, elem.ext);
+		} else {
+			if (elem.name.size() != 0) {
+				elem_fname = replace_ext(fname, elem.ext, " " + elem.name);
+			} else if (elem.lang.size() != 0) {
+				elem_fname = replace_ext(fname, elem.ext, " " + elem.lang);
+			} else {
+				elem_fname = replace_ext(fname, elem.ext);
+			}
 		}
 
 		if (fnames.count(elem_fname)) {
@@ -239,7 +242,7 @@ static void extract_data() {
 			fnames.insert(make_pair(elem_fname, 0));
 		}
 
-        cout << "Extracting " << elem_fname << "..." << endl;
+		cout << "Extracting " << elem_fname << "..." << endl;
 		xsystem("ffmpeg -loglevel error -stats -i \"" + fname + "\" -map " +
 				elem.stream + " -c copy \"" + elem_fname + "\"");
 	}
@@ -266,17 +269,10 @@ int main(int argc, char** argv) {
 	}
 
 	if (access(fname.c_str(), F_OK)) {
-		throw std::runtime_error("file does not exist!");
+		throw std::runtime_error("video file does not exist!");
 	}
 
-	string cmd = "ffprobe " + string(fname) + " 2>&1";
-	string cmd_out = exec(cmd.c_str());
-	int regex_time = extract_info(cmd_out);
-
-	sort(menu.options.begin(), menu.options.end(),
-		 [](const container_element& x, const container_element& y) {
-			 return x.type < y.type;
-		 });
+	extract_info();
 
 	int cancelled = false;
 	if (op_i) {
@@ -284,7 +280,6 @@ int main(int argc, char** argv) {
 	}
 
 	if (!cancelled) {
-		cout << "[TIME]: ffprobe regex time = " << regex_time << " μs" << endl;
 		extract_data();
 		return 0;
 	} else {
