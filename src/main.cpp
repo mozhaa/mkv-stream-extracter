@@ -250,6 +250,25 @@ static void extract_data() {
 	}
 }
 
+static bool ffmpeg_exists() {
+    return system("which ffprobe > /dev/null 2>&1") == 0;
+}
+
+static void show_help() {
+    std::string help = R"(
+Usage: ./stream-extract <path to mkv> [flags]
+Flags:
+    -i - interactive mode (choose streams to extract)
+        Controls:
+            [arrows] to navigate;
+            [space] to select/deselect;
+            [enter] to confirm
+    -n - no action mode (don't do anything, just print)
+    -h - show this help message
+)";
+    cout << help << endl;
+}
+
 int main(int argc, char** argv) {
 	for (int i = 1; i < argc; ++i) {
 		if (argv[i][0] == '-') {
@@ -261,6 +280,10 @@ int main(int argc, char** argv) {
 				op_n = true;
 				continue;
 			}
+            if (!strcmp(argv[i], "-h")) {
+                show_help();
+                return 1;
+            }
 			throw std::invalid_argument("unknown option: " + string(argv[i]));
 		} else {
 			fname = argv[i];
@@ -273,6 +296,10 @@ int main(int argc, char** argv) {
 	if (access(fname.c_str(), F_OK)) {
 		throw std::runtime_error("video file does not exist!");
 	}
+
+    if (!ffmpeg_exists()) {
+        throw std::runtime_error("install ffmpeg library!");
+    }
 
 	extract_info();
 

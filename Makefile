@@ -1,15 +1,27 @@
-CC = g++
-CFLAGS = -std=c++2a -g -lboost_regex -lncursesw
-EXE = subex
-OBJ = main.o
+CXX = g++
+CXXFLAGS = -std=c++2a -g
+LDFLAGS = -lboost_regex -lncursesw
+EXE = stream-extract
+OBJDIR = obj
 SRCDIR = src
 EXT = cpp
 
-%.o: $(SRCDIR)/%.$(EXT)
-	$(CC) -c -o $@ $< $(CFLAGS)
+OBJECTS = $(patsubst $(SRCDIR)/%.cpp,$(OBJDIR)/%.o,$(wildcard $(SRCDIR)/*.cpp))
 
-all: $(OBJ)
-	$(CC) -o $(EXE) $^ $(CFLAGS)
+all: $(EXE)
+
+$(EXE): $(OBJECTS)
+	$(CXX) $(OBJECTS) -o $(EXE) $(LDFLAGS)
+	
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp | $(OBJDIR)
+	$(CXX) $(CXXFLAGS) -c -MMD -o $@ $<
+
+include $(wildcard $(OBJDIR)/*.d)
+
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
 
 clean:
-	rm -f $(OBJ) $(EXE)
+	rm -rf $(OBJDIR) $(EXE)
+
+.PHONY: clean all
