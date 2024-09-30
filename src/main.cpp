@@ -251,7 +251,7 @@ static void extract_data() {
 }
 
 static bool ffmpeg_exists() {
-    return system("which ffprobe > /dev/null 2>&1") == 0;
+    return system("which ffmpeg > /dev/null 2>&1") == 0;
 }
 
 static void show_help() {
